@@ -1,0 +1,14 @@
+{
+  "Banana_Not_spoiled": 0,
+  "Banana_Spoiled": 1,
+  "Carrot_Not_spoiled": 2,
+  "Carrot_Spoiled": 3,
+  "Guava_Not_spoiled": 4,
+  "Guava_Spoiled": 5,
+  "Indian_Gooseberry_Not_spoiled": 6,
+  "Indian_Gooseberry_Spoiled": 7,
+  "Mango_Not_spoiled": 8,
+  "Mango_Spoiled": 9,
+  "Tomato_Not_spoiled": 10,
+  "Tomato_Spoiled": 11
+}

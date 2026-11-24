@@ -1,0 +1,155 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>SpoilCheck Tester</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="logo" aria-hidden="true">●</span>
+      <div>
+        <h1>SpoilCheck</h1>
+        <p class="tagline">Multimodal spoilage model tester</p>
+      </div>
+    </div>
+    <span id="status" class="status status-wait">Connecting…</span>
+  </header>
+
+  <main class="layout">
+    <!-- ================= INPUTS ================= -->
+    <section class="panel" aria-labelledby="inputs-title">
+      <h2 id="inputs-title">Inputs</h2>
+
+      <div class="sample-box">
+        <div class="sample-row">
+          <label for="sample-label" class="field-label">Try a dataset sample</label>
+          <div class="sample-controls">
+            <select id="sample-label"><option value="">Random class</option></select>
+            <button id="sample-btn" type="button" class="btn btn-secondary">Load sample</button>
+          </div>
+        </div>
+        <p class="hint">Fills the photo, thermal frame and gas reading from the local TR-6 dataset. Samples may come from the training set, so results on them look better than on new fruit.</p>
+      </div>
+
+      <!-- camera -->
+      <div class="sensor">
+        <div class="sensor-head">
+          <div>
+            <h3>Camera (sRGB)</h3>
+            <p class="hint">Always on: the main signal</p>
+          </div>
+          <span class="pill pill-on">Required</span>
+        </div>
+        <label class="drop" id="srgb-drop">
+          <input type="file" id="srgb-input" accept="image/*" hidden>
+          <img id="srgb-preview" alt="Selected fruit photo" hidden>
+          <span class="drop-text" id="srgb-text">Click or drop a fruit photo</span>
+        </label>
+        <label class="field fruit-field" for="fruit-select">Which fruit is it?
+          <select id="fruit-select"><option value="">Detect automatically</option></select>
+        </label>
+        <p class="hint">If you know the fruit, choose it: the model then only decides fresh or spoiled, so it can't mistake one fruit for another.</p>
+      </div>
+
+      <!-- IR -->
+      <div class="sensor">
+        <div class="sensor-head">
+          <div>
+            <h3>IR thermal sensor</h3>
+            <p class="hint">Heatmap + min / max surface temperature</p>
+          </div>
+          <label class="switch">
+            <input type="checkbox" id="ir-toggle" role="switch">
+            <span class="slider"></span>
+            <span class="switch-text" id="ir-state">Off</span>
+          </label>
+        </div>
+        <div id="ir-fields" class="sensor-body" hidden>
+          <label class="drop drop-small" id="ir-drop">
+            <input type="file" id="ir-input" accept="image/*" hidden>
+            <img id="ir-preview" alt="Selected thermal image" hidden>
+            <span class="drop-text" id="ir-text">Click or drop a thermal image</span>
+          </label>
+          <div class="grid2">
+            <label class="field">t_min (°C)<input type="number" step="0.1" id="t-min" placeholder="e.g. 29.1"></label>
+            <label class="field">t_max (°C)<input type="number" step="0.1" id="t-max" placeholder="e.g. 31.1"></label>
+          </div>
+          <p class="hint">Filenames like <code>…_29.1C_31.1C.jpg</code> fill the temperatures automatically.</p>
+        </div>
+      </div>
+
+      <!-- gas -->
+      <div class="sensor">
+        <div class="sensor-head">
+          <div>
+            <h3>Methane sensor (MQ-4)</h3>
+            <p class="hint">One reading from the gas sensor</p>
+          </div>
+          <label class="switch">
+            <input type="checkbox" id="gas-toggle" role="switch">
+            <span class="slider"></span>
+            <span class="switch-text" id="gas-state">Off</span>
+          </label>
+        </div>
+        <div id="gas-fields" class="sensor-body" hidden>
+          <div class="grid2">
+            <label class="field">ADC<input type="number" step="any" id="adc" placeholder="e.g. 96"></label>
+            <label class="field">Rs (kΩ)<input type="number" step="any" id="rs" placeholder="e.g. 96.56"></label>
+            <label class="field">Rs/R0<input type="number" step="any" id="rs-r0" placeholder="e.g. 1.39"></label>
+            <label class="field">Methane (ppm)<input type="number" step="any" id="ppm" placeholder="e.g. 18.44"></label>
+          </div>
+        </div>
+      </div>
+
+      <button id="predict-btn" type="button" class="btn btn-primary" disabled>Predict</button>
+      <p id="error" class="error" role="alert" hidden></p>
+    </section>
+
+    <!-- ================= RESULTS ================= -->
+    <section class="panel" aria-labelledby="results-title" aria-live="polite">
+      <h2 id="results-title">Result</h2>
+
+      <div id="empty" class="empty">
+        <p>Choose a photo (or load a sample), then press <b>Predict</b>.</p>
+        <p class="hint">Flip the sensor switches after a prediction to see how the answer changes without them.</p>
+      </div>
+
+      <div id="results" hidden>
+        <div id="verdict" class="verdict">
+          <p class="eyebrow">Fusion model · final answer</p>
+          <p class="verdict-main"><span id="v-variety"></span> <span id="v-state" class="badge"></span></p>
+          <p class="verdict-sub">Confidence <b id="v-conf"></b></p>
+          <div class="meter-wrap">
+            <div class="meter-labels"><span>Fresh</span><span>Spoilage probability <b id="v-spoil"></b></span><span>Spoiled</span></div>
+            <div class="meter"><div id="v-meter" class="meter-fill"></div></div>
+          </div>
+          <p id="truth" class="truth" hidden></p>
+        </div>
+
+        <div id="unsure" class="unsure" role="status" hidden></div>
+
+        <div class="chips" id="sensor-chips"></div>
+
+        <h3 class="section-title">Top predictions</h3>
+        <ul id="top-list" class="bars"></ul>
+
+        <h3 class="section-title">Each model on its own</h3>
+        <table class="models">
+          <thead><tr><th>Model</th><th>Prediction</th><th>Confidence</th></tr></thead>
+          <tbody id="models-body"></tbody>
+        </table>
+        <p class="hint" id="timing"></p>
+      </div>
+    </section>
+  </main>
+
+  <footer class="foot">
+    <p>Models: ConvNeXt-Tiny (camera) · ResNet18 + temps (thermal) · MLP (gas) · late fusion. For testing only, not a food-safety guarantee.</p>
+  </footer>
+
+  <script src="app.js"></script>
+</body>
+</html>

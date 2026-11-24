@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+.env
+
+# Model weights live on Hugging Face: https://huggingface.co/ArmanKhan01/SpoilCheck-Models
+# (downloaded automatically on first start, see Backend/app/model_store.py)
+Backend/Models/*.pth
+Backend/Models/*.pkl
+Backend/Models/v1_backup/
+
+# Dataset (public TR-6, far too large for git)
+Backend/Models/dataset/
+
+# Reports / slides (kept local)
+*.docx
+*.pdf
+*.pptx
+SpoilCheck_v1_vs_v2.md
+report assets/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
