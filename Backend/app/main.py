@@ -25,6 +25,7 @@ MODEL_DIR = BACKEND_DIR / "Models"
 FRONTEND_DIR = BACKEND_DIR.parent / "Frontend"
 FUSION_FILE = os.environ.get("SPOILCHECK_FUSION", "best_multimodal_fusion.pth")
 MAX_UPLOAD_MB = 30
+MAX_VIEWS = 6          # photos of one fruit per request (each adds ~0.3 s, ~1.3 s with clean background)
 
 _dataset_candidates = [MODEL_DIR / "dataset" / "TR-6_fixed" / "Classified",
                        MODEL_DIR / "dataset" / "TR-6" / "TR-6" / "Classified"]
@@ -73,7 +74,7 @@ def health():
     s: SampleIndex = state["samples"]
     return {"status": "ok", "classes": p.classes, "fruits": p.fruits, "fusion_file": p.fusion_file,
             "load_seconds": state["load_seconds"], "samples_available": s.available,
-            "sample_labels": s.labels, "background_removal": p.bg is not None}
+            "sample_labels": s.labels, "background_removal": p.bg is not None, "max_views": MAX_VIEWS}
 
 
 @app.get("/api/sample")
@@ -104,7 +105,8 @@ def sample_file(label: str, kind: str, filename: str):
 
 @app.post("/api/predict")
 async def predict(
-    srgb: UploadFile = File(...),
+    # one or more photos of the same fruit (repeat the `srgb` field for each side)
+    srgb: list[UploadFile] = File(...),
     # use_ir / use_gas are optional: when omitted, a sensor counts as present only if its data was
     # sent (IR image attached; all four gas values filled). Missing sensors are switched off inside
     # the fusion net -- never send 0 as a stand-in, that is read as a real measurement.
@@ -123,7 +125,12 @@ async def predict(
     fruit = fruit or None
     if fruit and fruit not in state["predictor"].fruits:
         raise HTTPException(400, f"Unknown fruit '{fruit}'")
-    srgb_img = await _read_image(srgb, "Camera")
+    srgb = [f for f in srgb if f.filename]
+    if not srgb:
+        raise HTTPException(400, "Add at least one camera photo")
+    if len(srgb) > MAX_VIEWS:
+        raise HTTPException(400, f"At most {MAX_VIEWS} photos per fruit")
+    srgb_imgs = [await _read_image(f, f"Camera photo {i + 1}") for i, f in enumerate(srgb)]
 
     if use_ir is None:
         use_ir = ir is not None and bool(ir.filename)
@@ -145,7 +152,7 @@ async def predict(
                "methane_ppm": _num(methane_ppm, "Methane ppm")}
 
     t0 = time.time()
-    result = state["predictor"].predict(srgb_img, ir_img, tmin, tmax, gas, fruit, clean_bg)
+    result = state["predictor"].predict(srgb_imgs, ir_img, tmin, tmax, gas, fruit, clean_bg)
     result["inference_ms"] = round((time.time() - t0) * 1000)
     return result
 

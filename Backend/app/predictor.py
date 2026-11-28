@@ -68,13 +68,20 @@ class SpoilCheckPredictor:
             transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225]),
         ])
 
-    def _summary(self, logits: torch.Tensor, top: int = 3, fruit: str | None = None) -> dict:
+    def _probs(self, logits: torch.Tensor, fruit: str | None = None) -> torch.Tensor:
+        """Class probabilities (12,). If the fruit is given, only its fresh/spoiled classes compete."""
         logits = logits.float()
-        if fruit:  # user said which fruit it is: only that fruit's fresh/spoiled classes compete
+        if fruit:
             keep = torch.tensor([f == fruit for f in self.class_fruit])
             logits = logits.masked_fill(~keep, float("-inf"))
+        return F.softmax(logits, dim=1)[0]
+
+    def _summary(self, logits: torch.Tensor, top: int = 3, fruit: str | None = None) -> dict:
+        return self._summary_probs(self._probs(logits, fruit), top, fruit)
+
+    def _summary_probs(self, probs: torch.Tensor, top: int = 3, fruit: str | None = None) -> dict:
+        if fruit:
             top = min(top, 2)
-        probs = F.softmax(logits, dim=1)[0]
         k = int(probs.argmax())
         order = torch.argsort(probs, descending=True)[:top].tolist()
         fruit_probs = {f: 0.0 for f in self.fruits}
@@ -95,30 +102,37 @@ class SpoilCheckPredictor:
             "top": [{**pretty(self.classes[i]), "probability": round(float(probs[i]), 4)} for i in order],
         }
 
-    @torch.inference_mode()
-    def predict(self, srgb_img: Image.Image, ir_img: Image.Image | None = None,
-                t_min: float | None = None, t_max: float | None = None, gas: dict | None = None,
-                fruit: str | None = None, clean_bg: bool = False) -> dict:
-        if fruit is not None and fruit not in self.fruits:
-            raise ValueError(f"Unknown fruit '{fruit}'. Choose one of: {', '.join(self.fruits)}")
-        # optional: cut the fruit out and put it on white, like the TR-6 training photos
+    def _clean(self, img: Image.Image, clean_bg: bool) -> tuple[Image.Image, dict]:
+        """Optional: cut the fruit out and put it on white, like the TR-6 training photos."""
         background = {"requested": clean_bg, "applied": False}
         if clean_bg:
             if self.bg is None:
                 background["reason"] = "background-removal model not loaded"
             else:
-                srgb_img, info = self.bg.clean(srgb_img)
+                img, info = self.bg.clean(img)
                 background.update(info)
                 if info["applied"]:
-                    background["preview"] = _jpeg_data_url(srgb_img)
+                    background["preview"] = _jpeg_data_url(img)
+        return img, background
 
-        # camera (always on)
-        x = self.tfms(srgb_img.convert("RGB")).unsqueeze(0)
-        feats = self.srgb.forward_features(x)
-        e_srgb = self.srgb.forward_head(feats, pre_logits=True)          # 768-d embedding
-        result = {"camera": self._summary(self.srgb.forward_head(feats), fruit=fruit)}
+    @torch.inference_mode()
+    def predict(self, srgb_imgs: Image.Image | list[Image.Image], ir_img: Image.Image | None = None,
+                t_min: float | None = None, t_max: float | None = None, gas: dict | None = None,
+                fruit: str | None = None, clean_bg: bool = False) -> dict:
+        """One or more camera photos of the SAME fruit (e.g. different sides) + optional IR and gas.
 
-        # IR thermal (optional)
+        Each photo goes through the camera model and the fusion head (with the same IR / gas
+        features); the class probabilities are then averaged over the photos for the verdict.
+        """
+        if fruit is not None and fruit not in self.fruits:
+            raise ValueError(f"Unknown fruit '{fruit}'. Choose one of: {', '.join(self.fruits)}")
+        if isinstance(srgb_imgs, Image.Image):
+            srgb_imgs = [srgb_imgs]
+        if not srgb_imgs:
+            raise ValueError("At least one camera photo is needed")
+        result = {}
+
+        # IR thermal (optional, one reading for the whole fruit)
         use_ir = ir_img is not None
         if use_ir:
             temps = torch.tensor(self.temp_scaler.transform([[t_min, t_max, round(t_max - t_min, 2)]]), dtype=torch.float32)
@@ -128,7 +142,7 @@ class SpoilCheckPredictor:
             e_ir = torch.zeros(1, 544)
             result["ir"] = None
 
-        # methane gas (optional)
+        # methane gas (optional, one reading for the whole fruit)
         use_gas = gas is not None
         if use_gas:
             g = torch.tensor(self.gas_scaler.transform([[gas[k] for k in GAS_KEYS]]), dtype=torch.float32)
@@ -138,10 +152,30 @@ class SpoilCheckPredictor:
             e_gas = torch.zeros(1, 64)
             result["gas"] = None
 
-        result["fusion"] = self._summary(self.fusion(e_srgb, e_ir, e_gas, use_ir=use_ir, use_gas=use_gas), top=5, fruit=fruit)
+        # camera (always on): every photo separately
+        cam_probs, fus_probs, views = [], [], []
+        for i, img in enumerate(srgb_imgs):
+            img, background = self._clean(img, clean_bg)
+            x = self.tfms(img.convert("RGB")).unsqueeze(0)
+            feats = self.srgb.forward_features(x)
+            e_srgb = self.srgb.forward_head(feats, pre_logits=True)      # 768-d embedding
+            cp = self._probs(self.srgb.forward_head(feats), fruit)
+            fp = self._probs(self.fusion(e_srgb, e_ir, e_gas, use_ir=use_ir, use_gas=use_gas), fruit)
+            cam_probs.append(cp)
+            fus_probs.append(fp)
+            v = self._summary_probs(fp, top=1, fruit=fruit)
+            views.append({"index": i, "label": v["label"], "variety": v["variety"], "state": v["state"],
+                          "confidence": v["confidence"], "spoiled_probability": v["spoiled_probability"],
+                          "background": background})
+
+        result["camera"] = self._summary_probs(torch.stack(cam_probs).mean(0), fruit=fruit)
+        result["fusion"] = self._summary_probs(torch.stack(fus_probs).mean(0), top=5, fruit=fruit)
+        result["views"] = views
+        # rot is often on one side only: report how many photos on their own look spoiled
+        result["views_spoiled"] = sum(v["spoiled_probability"] > 0.5 for v in views)
         result["sensors_used"] = {"camera": True, "ir": use_ir, "gas": use_gas}
         result["fruit_given"] = fruit
-        result["background"] = background
+        result["background"] = views[0]["background"]   # first photo; kept for single-photo clients
         return result
 
 

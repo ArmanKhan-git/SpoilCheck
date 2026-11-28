@@ -30,6 +30,7 @@
 }
 
 * { box-sizing: border-box; }
+[hidden] { display: none !important; }
 html { -webkit-text-size-adjust: 100%; }
 body {
   margin: 0; background: var(--bg); color: var(--text);
@@ -181,3 +182,68 @@ select { flex: 1; min-width: 180px; }
 .bg-figure { margin: 14px 0 4px; padding: 10px; border: 1px solid var(--line); border-radius: 12px; }
 .bg-figure img { width: 100%; max-height: 220px; object-fit: contain; display: block; background: #fff; border-radius: 8px; }
 .bg-figure figcaption { color: var(--muted); font-size: 13px; margin-top: 6px; }
+
+/* several photos of one fruit */
+.drop-multi { flex-direction: column; align-items: stretch; justify-content: flex-start; gap: 12px;
+  min-height: 0; padding: 14px; cursor: default; }
+.drop-multi .drop-text { padding: 8px 4px 0; }
+.drop-multi.has-image { border-style: solid; }
+.thumbs { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(92px, 1fr)); gap: 8px; }
+.thumbs:empty { display: none; }
+.thumb { position: relative; aspect-ratio: 1; border-radius: 10px; overflow: hidden; background: var(--panel); border: 1px solid var(--line); }
+.thumb img { width: 100%; height: 100%; max-height: none; object-fit: cover; display: block; }
+.thumb-tag { position: absolute; left: 6px; top: 6px; min-width: 22px; height: 22px; padding: 0 6px; border-radius: 999px;
+  background: rgba(0, 0, 0, 0.6); color: #fff; font-size: 12px; font-weight: 700; display: grid; place-items: center; }
+.thumb-remove { position: absolute; right: 4px; top: 4px; width: 30px; height: 30px; border-radius: 50%; border: 0;
+  background: rgba(0, 0, 0, 0.6); color: #fff; font-size: 20px; line-height: 1; cursor: pointer; display: grid; place-items: center; }
+.thumb-remove:hover { background: var(--danger); }
+.photo-buttons { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; }
+.btn-file { display: inline-flex; align-items: center; justify-content: center; min-height: 44px; }
+.btn-file.is-disabled { opacity: 0.5; pointer-events: none; }
+.btn-link { background: none; border: 0; color: var(--muted); text-decoration: underline; padding: 10px 8px; }
+/* "Take photo" opens the camera directly: only useful on touch devices */
+.camera-only { display: none; }
+@media (pointer: coarse) { .camera-only { display: inline-flex; } }
+
+/* per-photo results */
+.views { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 8px; }
+.view { display: flex; gap: 10px; align-items: center; padding: 8px; border-radius: 10px; border: 1px solid var(--line); }
+.view img { width: 56px; height: 56px; object-fit: cover; border-radius: 8px; flex: none; background: #fff; }
+.view-info { min-width: 0; }
+.view-title { margin: 0; font-size: 13px; font-weight: 600; }
+.view-state { margin: 2px 0 0; font-size: 13px; color: var(--muted); }
+.view.is-spoiled { border-color: var(--spoiled); }
+.badge.small { font-size: 11px; padding: 2px 8px; }
+
+.table-wrap { overflow-x: auto; }
+
+/* ---------- phones ---------- */
+@media (max-width: 860px) {
+  .layout { margin: 14px auto; gap: 14px; padding: 0 10px; }
+  .foot { padding: 0 12px; }
+}
+@media (max-width: 560px) {
+  body { font-size: 15px; }
+  .topbar { padding: 10px 12px; gap: 10px; flex-wrap: wrap; }
+  .topbar h1 { font-size: 18px; }
+  .tagline { display: none; }
+  .status { font-size: 12px; padding: 4px 10px; }
+  .panel { padding: 14px; border-radius: 12px; }
+  .sensor { padding: 12px; }
+  /* 16px inputs stop iOS from zooming in when a field is tapped */
+  select, input[type="number"] { font-size: 16px; padding: 10px; }
+  select { min-width: 0; }
+  .photo-buttons .btn-file { flex: 1 1 140px; }
+  .thumbs { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .verdict { padding: 14px; }
+  .verdict-main { font-size: 22px; }
+  .meter-labels { font-size: 11px; }
+  .models { font-size: 13px; }
+  .models th, .models td { padding: 8px 4px; }
+  .views { grid-template-columns: minmax(0, 1fr); }
+  /* keep Predict reachable while scrolling through the inputs */
+  .btn-primary { position: sticky; bottom: 10px; z-index: 5; box-shadow: 0 6px 18px rgba(0, 0, 0, 0.25); }
+}
+@media (max-width: 360px) {
+  .grid2 { grid-template-columns: minmax(0, 1fr); }
+}

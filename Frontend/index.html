@@ -23,7 +23,7 @@
     <section class="panel" aria-labelledby="inputs-title">
       <h2 id="inputs-title">Inputs</h2>
 
-      <div class="sample-box">
+      <div class="sample-box" id="sample-box">
         <div class="sample-row">
           <label for="sample-label" class="field-label">Try a dataset sample</label>
           <div class="sample-controls">
@@ -43,15 +43,25 @@
           </div>
           <span class="pill pill-on">Required</span>
         </div>
-        <label class="drop" id="srgb-drop">
-          <input type="file" id="srgb-input" accept="image/*" hidden>
-          <img id="srgb-preview" alt="Selected fruit photo" hidden>
-          <span class="drop-text" id="srgb-text">Click or drop a fruit photo</span>
-        </label>
+        <div class="drop drop-multi" id="srgb-drop">
+          <ul id="srgb-thumbs" class="thumbs" aria-label="Selected photos"></ul>
+          <p class="drop-text" id="srgb-text">Add 1–6 photos of the <b>same fruit</b> from different sides. On a computer you can also drop them here.</p>
+          <div class="photo-buttons">
+            <label class="btn btn-secondary btn-file camera-only">
+              <input type="file" id="srgb-camera" accept="image/*" capture="environment" hidden>
+              Take photo
+            </label>
+            <label class="btn btn-secondary btn-file">
+              <input type="file" id="srgb-input" accept="image/*" multiple hidden>
+              <span id="srgb-pick-text">Choose photos</span>
+            </label>
+            <button type="button" id="srgb-clear" class="btn btn-link" hidden>Remove all</button>
+          </div>
+        </div>
         <label class="field fruit-field" for="fruit-select">Which fruit is it?
           <select id="fruit-select"><option value="">Detect automatically</option></select>
         </label>
-        <p class="hint">If you know the fruit, choose it: the model then only decides fresh or spoiled, so it can't mistake one fruit for another.</p>
+        <p class="hint">If you know the fruit, choose it: the model then only decides fresh or spoiled, so it can't mistake one fruit for another. All photos are treated as the same fruit.</p>
         <label class="check" for="bg-toggle">
           <input type="checkbox" id="bg-toggle">
           <span>Clean background <span class="muted">(cut the fruit out onto white, like the training photos)</span></span>
@@ -76,7 +86,7 @@
           <label class="drop drop-small" id="ir-drop">
             <input type="file" id="ir-input" accept="image/*" hidden>
             <img id="ir-preview" alt="Selected thermal image" hidden>
-            <span class="drop-text" id="ir-text">Click or drop a thermal image</span>
+            <span class="drop-text" id="ir-text">Tap or drop a thermal image</span>
           </label>
           <div class="grid2">
             <label class="field">t_min (°C)<input type="number" step="0.1" id="t-min" placeholder="e.g. 29.1"></label>
@@ -118,13 +128,13 @@
       <h2 id="results-title">Result</h2>
 
       <div id="empty" class="empty">
-        <p>Choose a photo (or load a sample), then press <b>Predict</b>.</p>
+        <p>Add one or more photos of a fruit (or load a sample), then press <b>Predict</b>.</p>
         <p class="hint">Flip the sensor switches after a prediction to see how the answer changes without them.</p>
       </div>
 
       <div id="results" hidden>
         <div id="verdict" class="verdict">
-          <p class="eyebrow">Fusion model · final answer</p>
+          <p class="eyebrow" id="v-eyebrow">Fusion model · final answer</p>
           <p class="verdict-main"><span id="v-variety"></span> <span id="v-state" class="badge"></span></p>
           <p class="verdict-sub">Confidence <b id="v-conf"></b></p>
           <div class="meter-wrap">
@@ -144,14 +154,22 @@
         </figure>
         <p id="bg-note" class="hint" hidden></p>
 
+        <div id="views-block" hidden>
+          <h3 class="section-title">Each photo</h3>
+          <p class="hint" id="views-hint">The final answer averages all photos.</p>
+          <ul id="views-list" class="views"></ul>
+        </div>
+
         <h3 class="section-title">Top predictions</h3>
         <ul id="top-list" class="bars"></ul>
 
         <h3 class="section-title">Each model on its own</h3>
-        <table class="models">
-          <thead><tr><th>Model</th><th>Prediction</th><th>Confidence</th></tr></thead>
-          <tbody id="models-body"></tbody>
-        </table>
+        <div class="table-wrap">
+          <table class="models">
+            <thead><tr><th>Model</th><th>Prediction</th><th>Confidence</th></tr></thead>
+            <tbody id="models-body"></tbody>
+          </table>
+        </div>
         <p class="hint" id="timing"></p>
       </div>
     </section>

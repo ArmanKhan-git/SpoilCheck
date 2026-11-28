@@ -19,7 +19,8 @@ SpoilCheck Final Year Project/
 ├── SpoilCheck_Mentor_Update.pptx     ← 9-slide mentor deck, updated with v2 results
 ├── SpoilCheck_Mentor_Update_v1.pptx  ← the same deck with the old v1 numbers
 ├── Backend/
-│   ├── run.bat                       ← double-click: starts the tester at http://127.0.0.1:8000
+│   ├── run.bat                       ← double-click: starts the tester at http://127.0.0.1:8000 (`run.bat 8001` for another port)
+│   ├── run_phone.bat                 ← same, but reachable from phones on the same Wi-Fi; prints the address to open (§7)
 │   ├── requirements.txt              ← torch 2.5.1 CPU, timm 1.0.11, scikit-learn 1.6.1, fastapi …
 │   ├── .venv/                        ← Python 3.11 virtual env
 │   ├── app/
@@ -237,16 +238,39 @@ If retraining: either change cell 7 to `p_mod_drop=0.0` or run the cell above, t
 
 - **Start:** `Backend\run.bat`, then open http://127.0.0.1:8000.
 - **Manual:** `cd Backend` and run `.venv\Scripts\python -m uvicorn app.main:app --host 127.0.0.1 --port 8000`.
-- **Python version:** use **Python 3.11** (3.9–3.13 work). The pinned `torch 2.5.1` has no build for Python 3.14, so `pip install` fails there. If the default `python` is newer, create the venv with `py -3.11 -m venv .venv` before running `run.bat`. If port 8000 is busy, use `--port 8001`. (Both happened on the 28 Nov 2026 local setup; first start downloaded the models in ~58 s, later starts load in ~4 s.)
-- **Page:** camera photo (required), **IR toggle** (thermal image + t_min/t_max from the filename), **Methane toggle** (ADC, Rs, Rs/R0, ppm), "Load sample" with ✓/✗ against the true label; shows the fusion verdict, spoilage probability, top 5, and each standalone model's answer; flipping a toggle re-predicts.
+- **Python version:** use **Python 3.11** (3.9–3.13 work). The pinned `torch 2.5.1` has no build for Python 3.14, so `pip install` fails there. `run.bat` now tries `py -3.11` first when it creates the venv, and falls back to `python`. If port 8000 is busy, run `run.bat 8001`. (Both happened on the 28 Nov 2026 local setup; first start downloaded the models in ~58 s, later starts load in ~4 s.)
+- **Page:** 1–6 camera photos of one fruit (required, see "Several photos" below), **IR toggle** (thermal image + t_min/t_max from the filename), **Methane toggle** (ADC, Rs, Rs/R0, ppm), "Load sample" with ✓/✗ against the true label; shows the fusion verdict, spoilage probability, top 5, and each standalone model's answer; flipping a toggle re-predicts.
 - **Fruit selector (added 22 Nov 2026):** "Which fruit is it?" under the photo. When set, every model's logits are masked to that fruit's two classes, so it only decides fresh vs spoiled and can't confuse fruits. Default "Detect automatically".
 - **Unsure warning:** shown when the top fruit's summed probability is < 0.45 or < 3× the runner-up fruit (`FRUIT_CONF_MIN`, `FRUIT_RATIO_MIN` in `predictor.py`), or when the spoiled probability is within 0.5 ± 0.15. Calibrated on 60 TR-6 photos (camera only): 0 false fruit warnings; a web photo of a mouldy tomato called "Mango 34%" is flagged. Reason it exists: on out-of-dataset photos the model sometimes confuses fruit types (tomato/guava → mango), because it learned from only ~3 fruits per variety on a white background.
-- **API:** `GET /api/health` (also returns `fruits`) · `GET /api/sample?label=` · `GET /api/sample-file/{label}/{srgb|ir}/{filename}` · `POST /api/predict` (multipart: `srgb`, `use_ir`, `ir`, `t_min`, `t_max`, `use_gas`, `adc`, `rs`, `rs_r0`, `methane_ppm`, optional `fruit` e.g. `Tomato`, optional `clean_bg`). `use_ir` / `use_gas` are optional: when omitted, a sensor is used only if its data was sent (see §8). The response includes `sensors_used` and `background` (`applied`, `mask_coverage`, `preview` data URL when applied). Each model summary now includes `fruit_confidence`, `fruit_candidates`, `unsure_fruit`, `unsure_state`.
+- **API:** `GET /api/health` (also returns `fruits`) · `GET /api/sample?label=` · `GET /api/sample-file/{label}/{srgb|ir}/{filename}` · `POST /api/predict` (multipart: `srgb` (repeat the field for several photos of the same fruit, max 6), `use_ir`, `ir`, `t_min`, `t_max`, `use_gas`, `adc`, `rs`, `rs_r0`, `methane_ppm`, optional `fruit` e.g. `Tomato`, optional `clean_bg`). `use_ir` / `use_gas` are optional: when omitted, a sensor is used only if its data was sent (see §8). The response includes `sensors_used`, `views` (one entry per photo: label, state, confidence, spoiled probability, its own `background` info), `views_spoiled` (how many photos look spoiled on their own) and `background` (first photo's: `applied`, `mask_coverage`, `preview` data URL when applied). `GET /api/health` also returns `max_views`. Each model summary now includes `fruit_confidence`, `fruit_candidates`, `unsure_fruit`, `unsure_state`.
 - **Use another fusion file:** set `SPOILCHECK_FUSION=<file>.pth`.
 - **Roll back to v1:** copy the six files from `Models/v1_backup/` into `Models/`.
 - **Verified with v2 (22 Nov 2026):** models load in 2.4 s; 36 random dataset samples (3 per class) × 4 sensor combos → 35/36 correct in every combo (the miss: one spoiled gooseberry called fresh); 0.33 s per prediction on CPU. Samples may be training images, so this is a smoke test, not an accuracy figure. No backend code changes were needed for v2 (only a docstring in `model_defs.py`).
 
 - **Clean background switch (added 28 Nov 2026):** under the photo. When on, the fruit is cut out onto white before the camera model and the result panel shows "what the camera model saw". Off by default; see §9.
+
+### Several photos of one fruit (added 28 Nov 2026)
+
+A fruit can look fresh from one side and rotten from the other, so the page now takes **1–6 photos of the same fruit** (different sides).
+
+- **How the answer is combined:** each photo goes through the camera model and the fusion head separately (IR and gas, if on, are computed once and shared, since they describe the whole fruit). The 12 class probabilities are then **averaged** over the photos, and that average is the verdict. The fruit selector, unsure warning and clean-background switch apply to every photo.
+- **One-bad-side warning:** averaging can hide rot that shows on one side only. So the result also reports how many photos look spoiled on their own (`views_spoiled`), and when the overall answer is "fresh" but at least one photo says "spoiled", the page shows a warning to check that side. Averaging was kept for the verdict (rather than "spoiled if any photo is spoiled") because a single bad photo, such as a blurry one or one with a shadow, would otherwise cause false alarms; the warning keeps the one-sided rot visible.
+- **Result panel:** "Each photo" lists every photo with its own verdict and spoiled probability (showing the cut-out when the background was removed).
+- **Cost:** about 0.3 s per photo on a laptop CPU, about 1.3 s per photo with clean background.
+- **Not validated on accuracy:** the model was trained and tested one photo at a time; multi-photo averaging has not been measured on a test set. The TR-6 data has several angles per fruit per day, so this could be evaluated later.
+- **API test (28 Nov 2026,** crops of the dataset photos in `bg_removal_examples.jpg`): one spoiled banana → Banana_Spoiled 94.7%; fresh + spoiled carrot photos with fruit = Carrot and clean background → averaged 48.8% spoiled, flagged unsure (one photo 0.5%, the other 97.0%); two fresh + one spoiled banana photo → "fresh" overall (37.4% spoiled) with 1 of 3 photos spoiled, so the one-bad-side warning fires; 7 photos → rejected ("At most 6 photos per fruit"). Mixing different fruits on purpose here only tests the logic; real use is one fruit.
+
+### Phone layout and phone access (added 28 Nov 2026)
+
+- **Responsive page:** one column on screens under 860 px; under 560 px smaller paddings and headline, a 3-across photo grid, 16 px form fields (stops iPhones zooming in when a field is tapped), a sticky **Predict** button, and the page scrolls to the result after predicting. The dataset-sample box is hidden when the server has no dataset.
+- **Taking photos:** on touch devices a **Take photo** button opens the rear camera directly (`capture="environment"`); **Choose photos** picks several from the gallery at once. Each photo shows a numbered thumbnail with a × to remove it.
+- **Smaller uploads:** the browser shrinks photos to at most 1600 px (JPEG 90%) before uploading, so a ~5 MB phone photo becomes a few hundred KB. The model only uses 224 px and background removal works at ≤1024 px, so nothing is lost. One side effect: the browser applies the photo's EXIF rotation while shrinking, so phone photos arrive upright. Uploads of 1600 px or less are sent unchanged, as before.
+- **Opening the site on a phone:**
+  1. Phone and PC on the **same Wi-Fi** (or the PC connected to the phone's hotspot).
+  2. Start with `Backend\run_phone.bat` (or `run_phone.bat 8001`). It listens on all network interfaces (`--host 0.0.0.0`) and prints the address to open, e.g. `http://192.168.1.5:8000`.
+  3. Open that address in the phone's browser.
+  4. If it doesn't load: allow Python through Windows Firewall when asked (or in *Windows Security → Firewall → Allow an app*), and check that the Wi-Fi doesn't isolate devices from each other (common on college and guest networks). In that case use a phone hotspot instead.
+- `run.bat` still listens only on `127.0.0.1` (this PC only), so the server is not exposed to the network unless `run_phone.bat` is used. There is no login, so only run `run_phone.bat` on a network you trust.
 
 ---
 
@@ -335,3 +359,84 @@ This is what lets an ESP32 (or a phone) send whatever it has: it simply leaves o
 - Caveat: Grad-CAM shows where the model looks, not why. 8 photos are illustrations, not a measurement.
 
 **Not yet in the folder:** `cm_fusion.png` (config E, not deployed) is still on Drive, and the ablation results exist only as the §5 table (no chart yet).
+
+---
+
+## 12. Report framing and IoT deployment (proposed design, added 28 Nov 2026)
+
+### How the report presents the project
+
+The report covers two parts, and keeps them clearly separate:
+
+| | Part A: camera-based spoilage detection | Part B: multimodal IoT system |
+|---|---|---|
+| Status | **Built, trained and tested** | **Proposed design**, software side ready, hardware not built |
+| Sensors | Phone or camera photo | Camera + thermal camera + MQ-4 gas sensor |
+| Evidence | Camera model 95.91% on the TR-6 test set (§5), confusion matrix and Grad-CAM (§11), working web tester (§7), first phone test (§9) | Fusion results on TR-6 data: 98.05% with all sensors, thermal halves the errors (§5); API already accepts any sensor combination (§8) |
+| What it shows | The core system works with a camera alone, which is cheap and available to anyone with a phone | Extra sensors can improve accuracy further, and how a device would plug into the existing backend |
+
+Key message: **the camera alone is enough for a working system; IoT sensors are an upgrade path.** The fusion numbers come from the TR-6 dataset's sensors, not from hardware we built, and the report must say so.
+
+### Proposed IoT architecture
+
+```
+ ┌──────────────── Sensing unit (inside a light-coloured box with LED lighting) ───────────────┐
+ │  Camera module (e.g. ESP32-CAM / Pi camera)   →  photo of the fruit                          │
+ │  Thermal camera (optional)                     →  thermal image + t_min, t_max (°C)          │
+ │  MQ-4 methane sensor (optional)                →  ADC value → Rs, Rs/R0, ppm                 │
+ │                     ↓                                                                        │
+ │  Microcontroller (ESP32) or Raspberry Pi: collects readings, connects over Wi-Fi             │
+ └──────────────────────────────────────────┬───────────────────────────────────────────────────┘
+                                            │  HTTP POST /api/predict (multipart form)
+                                            ▼
+ ┌──────────── Server (laptop / cloud, existing FastAPI backend, §7) ────────────┐
+ │  Camera model + thermal model + gas model → fusion network → verdict          │
+ └──────────────────────────────────────────┬────────────────────────────────────┘
+                                            │  JSON: fresh/spoiled, probability, sensors used
+                                            ▼
+                    Display: web page, phone, or an OLED/LED on the device
+```
+
+**Why the models run on the server, not on the device:** the camera model (ConvNeXt-Tiny) and thermal model (ResNet18) are far too large for an ESP32. On a laptop CPU one prediction takes about 0.3 s (§7). A Raspberry Pi 4/5 could host the backend itself, but its speed has not been tested.
+
+### Components and requirements
+
+**Camera (core sensor)**
+- Any camera of about 2 MP or more is enough: the model resizes every photo to 224×224.
+- Put the fruit in a small box with a plain light background and even LED lighting. This copies the TR-6 photo conditions, which is the most effective way to avoid the fruit-type confusion seen on everyday photos (§9, §10 item 3b). On the server side, the background-removal switch (§9) does a similar job.
+
+**Thermal camera (optional, biggest gain)**
+- Must send a thermal image plus the minimum and maximum temperature in °C (`t_min`, `t_max`).
+- **Resolution matters.** The thermal model was trained on TR-6's 640×480 thermal images. Low-cost sensors such as the MLX90640 (32×24 pixels) or AMG8833 (8×8) produce images that look very different, so the trained model would not transfer to them; they would need new training data. A proper thermal camera (handheld or phone-attachment type) is needed to use the existing model.
+- Thermal detects spoilage poorly on tomato (§5), so it supports the camera rather than replacing it.
+
+**MQ-4 methane sensor (optional, no measured benefit)**
+- Read through an ADC. The model expects four values: `adc`, `rs`, `rs_r0`, `methane_ppm`.
+- Conversions (standard for MQ-series sensors): `Vout = ADC / ADC_max × Vref`; `Rs = RL × (Vc − Vout) / Vout` (RL = load resistor on the module); `R0` = Rs measured in clean air ÷ the clean-air ratio from the MQ-4 datasheet; `ppm` from the datasheet's log-log Rs/R0 curve.
+- Practical points: needs a 5 V heater supply and a warm-up of a few minutes before each use (longer burn-in when new); calibrate R0 for each individual sensor; on an ESP32, scale the 0–5 V output down to the 3.3 V ADC range with a voltage divider.
+- **Honest note:** in our results gas added nothing beyond noise (§5), partly because the TR-6 gas readings are per day, not per photo. A gas sensor taking readings in a closed box together with each photo could behave differently, but that is untested.
+
+### How the device talks to the backend (already implemented)
+
+The device sends one HTTP request per check. A sensor that is not fitted is simply left out; the backend switches it off inside the fusion network (§8). Example:
+
+```bash
+curl -X POST http://<server>:8000/api/predict \
+  -F srgb=@fruit.jpg \
+  -F ir=@thermal.jpg -F t_min=24.1 -F t_max=29.8 \
+  -F adc=512 -F rs=10.2 -F rs_r0=2.3 -F methane_ppm=180 \
+  -F fruit=Tomato -F clean_bg=true
+```
+
+- Camera only (the minimum): just `-F srgb=@fruit.jpg`.
+- The response contains the verdict, spoilage probability, which sensors were used, and each model's own answer.
+
+### What is validated and what is not
+
+| Claim | Status |
+|---|---|
+| Camera model detects fresh vs spoiled on TR-6 test data | Validated (95.91%, §5) |
+| Fusion with thermal improves accuracy on TR-6 data | Validated on dataset sensors (98.05%, §5) |
+| Backend accepts any sensor combination from a device | Implemented and tested through the API (§8) |
+| Works on real phone photos | Informal check only (§9); recorded test still to do |
+| Works with low-cost thermal or gas hardware we build | **Not tested**, hardware not built; low-resolution thermal sensors would need retraining |
