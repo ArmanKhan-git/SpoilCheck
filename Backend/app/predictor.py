@@ -1,4 +1,6 @@
 """Loads the four trained models and runs inference with any combination of sensors."""
+import base64
+import io
 import json
 from pathlib import Path
 
@@ -9,6 +11,7 @@ import torch.nn.functional as F
 from PIL import Image
 from torchvision import transforms
 
+from .background import BackgroundCleaner
 from .model_defs import MultimodalFusionNet, StandaloneGasMLP, StandaloneIRModel
 
 GAS_KEYS = ("adc", "rs", "rs_r0", "methane_ppm")
@@ -31,8 +34,11 @@ def pretty(label: str) -> dict:
 
 
 class SpoilCheckPredictor:
-    def __init__(self, model_dir: Path, fusion_file: str = "best_multimodal_fusion.pth"):
+    def __init__(self, model_dir: Path, fusion_file: str = "best_multimodal_fusion.pth",
+                 bg_model_file: str | None = "u2netp.onnx"):
         self.model_dir = Path(model_dir)
+        bg_path = self.model_dir / bg_model_file if bg_model_file else None
+        self.bg = BackgroundCleaner(bg_path) if bg_path and bg_path.is_file() else None
         self.fusion_file = fusion_file
         with open(self.model_dir / "class_indices.json") as f:
             c2i = json.load(f)
@@ -92,9 +98,20 @@ class SpoilCheckPredictor:
     @torch.inference_mode()
     def predict(self, srgb_img: Image.Image, ir_img: Image.Image | None = None,
                 t_min: float | None = None, t_max: float | None = None, gas: dict | None = None,
-                fruit: str | None = None) -> dict:
+                fruit: str | None = None, clean_bg: bool = False) -> dict:
         if fruit is not None and fruit not in self.fruits:
             raise ValueError(f"Unknown fruit '{fruit}'. Choose one of: {', '.join(self.fruits)}")
+        # optional: cut the fruit out and put it on white, like the TR-6 training photos
+        background = {"requested": clean_bg, "applied": False}
+        if clean_bg:
+            if self.bg is None:
+                background["reason"] = "background-removal model not loaded"
+            else:
+                srgb_img, info = self.bg.clean(srgb_img)
+                background.update(info)
+                if info["applied"]:
+                    background["preview"] = _jpeg_data_url(srgb_img)
+
         # camera (always on)
         x = self.tfms(srgb_img.convert("RGB")).unsqueeze(0)
         feats = self.srgb.forward_features(x)
@@ -124,4 +141,14 @@ class SpoilCheckPredictor:
         result["fusion"] = self._summary(self.fusion(e_srgb, e_ir, e_gas, use_ir=use_ir, use_gas=use_gas), top=5, fruit=fruit)
         result["sensors_used"] = {"camera": True, "ir": use_ir, "gas": use_gas}
         result["fruit_given"] = fruit
+        result["background"] = background
         return result
+
+
+def _jpeg_data_url(img: Image.Image, max_side: int = 480) -> str:
+    """Small JPEG preview of the image the camera model actually saw."""
+    im = img.convert("RGB").copy()
+    im.thumbnail((max_side, max_side))
+    buf = io.BytesIO()
+    im.save(buf, format="JPEG", quality=80)
+    return "data:image/jpeg;base64," + base64.b64encode(buf.getvalue()).decode()

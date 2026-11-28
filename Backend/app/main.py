@@ -73,7 +73,7 @@ def health():
     s: SampleIndex = state["samples"]
     return {"status": "ok", "classes": p.classes, "fruits": p.fruits, "fusion_file": p.fusion_file,
             "load_seconds": state["load_seconds"], "samples_available": s.available,
-            "sample_labels": s.labels}
+            "sample_labels": s.labels, "background_removal": p.bg is not None}
 
 
 @app.get("/api/sample")
@@ -105,21 +105,30 @@ def sample_file(label: str, kind: str, filename: str):
 @app.post("/api/predict")
 async def predict(
     srgb: UploadFile = File(...),
-    use_ir: bool = Form(False),
+    # use_ir / use_gas are optional: when omitted, a sensor counts as present only if its data was
+    # sent (IR image attached; all four gas values filled). Missing sensors are switched off inside
+    # the fusion net -- never send 0 as a stand-in, that is read as a real measurement.
+    use_ir: bool | None = Form(None),
     ir: UploadFile | None = File(None),
     t_min: str | None = Form(None),
     t_max: str | None = Form(None),
-    use_gas: bool = Form(False),
+    use_gas: bool | None = Form(None),
     adc: str | None = Form(None),
     rs: str | None = Form(None),
     rs_r0: str | None = Form(None),
     methane_ppm: str | None = Form(None),
     fruit: str | None = Form(None),   # e.g. "Tomato"; empty/omitted = detect the fruit automatically
+    clean_bg: bool = Form(False),     # cut the fruit out onto a white background before the camera model
 ):
     fruit = fruit or None
     if fruit and fruit not in state["predictor"].fruits:
         raise HTTPException(400, f"Unknown fruit '{fruit}'")
     srgb_img = await _read_image(srgb, "Camera")
+
+    if use_ir is None:
+        use_ir = ir is not None and bool(ir.filename)
+    if use_gas is None:
+        use_gas = all(v not in (None, "") for v in (adc, rs, rs_r0, methane_ppm))
 
     ir_img, tmin, tmax = None, None, None
     if use_ir:
@@ -136,7 +145,7 @@ async def predict(
                "methane_ppm": _num(methane_ppm, "Methane ppm")}
 
     t0 = time.time()
-    result = state["predictor"].predict(srgb_img, ir_img, tmin, tmax, gas, fruit)
+    result = state["predictor"].predict(srgb_img, ir_img, tmin, tmax, gas, fruit, clean_bg)
     result["inference_ms"] = round((time.time() - t0) * 1000)
     return result
 

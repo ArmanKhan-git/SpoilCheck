@@ -9,6 +9,7 @@ venv/
 # (downloaded automatically on first start, see Backend/app/model_store.py)
 Backend/Models/*.pth
 Backend/Models/*.pkl
+Backend/Models/*.onnx
 Backend/Models/v1_backup/
 
 # Dataset (public TR-6, far too large for git)
@@ -26,3 +27,6 @@ report assets/
 Thumbs.db
 .vscode/
 .idea/
+
+# Phone photos for the background-removal benefit test (kept local)
+food test mobile/

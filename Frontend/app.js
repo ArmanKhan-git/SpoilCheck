@@ -88,6 +88,11 @@ async function checkHealth() {
       o.textContent = l.replace(/_Not_spoiled$/, " · Fresh").replace(/_Spoiled$/, " · Spoiled").replace(/_/g, " ");
       sel.appendChild(o);
     });
+    if (!h.background_removal) {
+      $("bg-toggle").disabled = true;
+      $("bg-toggle").closest(".check").classList.add("is-disabled");
+      $("bg-hint").textContent = "Background removal is not available on this server.";
+    }
     if (!h.samples_available) {
       $("sample-btn").disabled = true;
       $("sample-label").disabled = true;
@@ -154,6 +159,7 @@ async function predict() {
   fd.append("use_ir", useIr);
   fd.append("use_gas", useGas);
   if ($("fruit-select").value) fd.append("fruit", $("fruit-select").value);
+  fd.append("clean_bg", $("bg-toggle").checked);
   if (useIr) {
     if (!state.ir) return showError("IR sensor is on: add a thermal image, or switch it off.");
     if ($("t-min").value === "" || $("t-max").value === "") return showError("IR sensor is on: enter t_min and t_max.");
@@ -248,6 +254,8 @@ function render(d) {
     chips.appendChild(c);
   });
 
+  renderBackground(d.background);
+
   const list = $("top-list");
   list.innerHTML = "";
   f.top.forEach((t) => {
@@ -276,6 +284,21 @@ function render(d) {
   $("timing").textContent = `Inference took ${d.inference_ms} ms on the server. The gas-only model is close to guessing (see the ablation results).`;
 }
 
+function renderBackground(bg) {
+  const fig = $("bg-figure"), note = $("bg-note");
+  fig.hidden = true;
+  note.hidden = true;
+  if (!bg || !bg.requested) return;
+  if (bg.applied) {
+    $("bg-preview").src = bg.preview;
+    $("bg-caption").textContent = `What the camera model saw: background removed (fruit covers ${pct(bg.mask_coverage)} of the photo).`;
+    fig.hidden = false;
+  } else {
+    note.textContent = `Background not removed (${bg.reason || "cut-out failed"}): the original photo was used.`;
+    note.hidden = false;
+  }
+}
+
 // ---------- init ----------
 setupDrop("srgb");
 setupDrop("ir");
@@ -283,5 +306,6 @@ setupToggle("ir");
 setupToggle("gas");
 $("predict-btn").addEventListener("click", predict);
 $("fruit-select").addEventListener("change", () => { if (state.hasResult) predict(); });
+$("bg-toggle").addEventListener("change", () => { if (state.hasResult) predict(); });
 $("sample-btn").addEventListener("click", loadSample);
 checkHealth();

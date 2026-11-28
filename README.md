@@ -26,7 +26,11 @@ SpoilCheck Final Year Project/
 │   │   ├── main.py                   ← FastAPI: /api/health, /api/predict, /api/sample, serves Frontend/
 │   │   ├── predictor.py              ← loads the 4 models + scalers, runs inference with any sensor combo
 │   │   ├── model_defs.py             ← model classes (must match the training notebook exactly)
+│   │   ├── model_store.py            ← downloads missing model files (Hugging Face + u2netp) on startup
+│   │   ├── background.py             ← optional background removal (U²-Net-p via onnxruntime), see §9
 │   │   └── samples.py                ← picks test inputs (photo + nearest IR + gas reading) from the dataset
+│   ├── experiments/
+│   │   └── eval_background.py        ← background-removal harm check on TR-6 photos (§9)
 │   └── Models/
 │       ├── best_convnext_spoilage.pth     ← v2 camera model (ConvNeXt-Tiny, 12 classes)
 │       ├── best_ir_model.pth              ← v2 IR model (ResNet18 + temperature MLP)
@@ -34,6 +38,7 @@ SpoilCheck Final Year Project/
 │       ├── best_multimodal_fusion.pth     ← v2 fusion head = ablation config D (renamed from best_multimodal_fusion_D.pth)
 │       ├── class_indices.json             ← 12 class names → indices (same in v1 and v2)
 │       ├── sensor_scalers.pkl             ← v2 StandardScalers for temps + gas (fit on v2 train split)
+│       ├── u2netp.onnx                    ← background-removal model (4.6 MB, auto-downloaded from rembg's GitHub release)
 │       ├── v1_backup/                     ← the six v1 files, same names
 │       ├── SpoilCheck_Training_v2.ipynb   ← v2 training notebook (run on Colab 22 Nov 2026)
 │       ├── colab_cell_fusion_ablation.py  ← single ablation cell used on the v1 Colab run
@@ -207,19 +212,63 @@ If retraining: either change cell 7 to `p_mod_drop=0.0` or run the cell above, t
 - **Page:** camera photo (required), **IR toggle** (thermal image + t_min/t_max from the filename), **Methane toggle** (ADC, Rs, Rs/R0, ppm), "Load sample" with ✓/✗ against the true label; shows the fusion verdict, spoilage probability, top 5, and each standalone model's answer; flipping a toggle re-predicts.
 - **Fruit selector (added 22 Nov 2026):** "Which fruit is it?" under the photo. When set, every model's logits are masked to that fruit's two classes, so it only decides fresh vs spoiled and can't confuse fruits. Default "Detect automatically".
 - **Unsure warning:** shown when the top fruit's summed probability is < 0.45 or < 3× the runner-up fruit (`FRUIT_CONF_MIN`, `FRUIT_RATIO_MIN` in `predictor.py`), or when the spoiled probability is within 0.5 ± 0.15. Calibrated on 60 TR-6 photos (camera only): 0 false fruit warnings; a web photo of a mouldy tomato called "Mango 34%" is flagged. Reason it exists: on out-of-dataset photos the model sometimes confuses fruit types (tomato/guava → mango), because it learned from only ~3 fruits per variety on a white background.
-- **API:** `GET /api/health` (also returns `fruits`) · `GET /api/sample?label=` · `GET /api/sample-file/{label}/{srgb|ir}/{filename}` · `POST /api/predict` (multipart: `srgb`, `use_ir`, `ir`, `t_min`, `t_max`, `use_gas`, `adc`, `rs`, `rs_r0`, `methane_ppm`, optional `fruit` e.g. `Tomato`). Each model summary now includes `fruit_confidence`, `fruit_candidates`, `unsure_fruit`, `unsure_state`.
+- **API:** `GET /api/health` (also returns `fruits`) · `GET /api/sample?label=` · `GET /api/sample-file/{label}/{srgb|ir}/{filename}` · `POST /api/predict` (multipart: `srgb`, `use_ir`, `ir`, `t_min`, `t_max`, `use_gas`, `adc`, `rs`, `rs_r0`, `methane_ppm`, optional `fruit` e.g. `Tomato`, optional `clean_bg`). `use_ir` / `use_gas` are optional: when omitted, a sensor is used only if its data was sent (see §8). The response includes `sensors_used` and `background` (`applied`, `mask_coverage`, `preview` data URL when applied). Each model summary now includes `fruit_confidence`, `fruit_candidates`, `unsure_fruit`, `unsure_state`.
 - **Use another fusion file:** set `SPOILCHECK_FUSION=<file>.pth`.
 - **Roll back to v1:** copy the six files from `Models/v1_backup/` into `Models/`.
 - **Verified with v2 (22 Nov 2026):** models load in 2.4 s; 36 random dataset samples (3 per class) × 4 sensor combos → 35/36 correct in every combo (the miss: one spoiled gooseberry called fresh); 0.33 s per prediction on CPU. Samples may be training images, so this is a smoke test, not an accuracy figure. No backend code changes were needed for v2 (only a docstring in `model_defs.py`).
 
+- **Clean background switch (added 28 Nov 2026):** under the photo. When on, the fruit is cut out onto white before the camera model and the result panel shows "what the camera model saw". Off by default; see §9.
+
 ---
 
-## 8. Next steps / open items
+## 8. Automatic sensor detection (added 28 Nov 2026)
+
+The camera is mandatory; IR and gas are optional and **no one has to enter 0 for a missing sensor**. If `use_ir` / `use_gas` are not sent, the backend treats IR as present only when a thermal image is attached, and gas only when all four values (`adc`, `rs`, `rs_r0`, `methane_ppm`) are sent; an incomplete gas reading is ignored. A missing sensor is switched off inside the fusion net (its projected features are zeroed, the same mechanism as the "unplugged" ablation rows), never by feeding zeros as input, which the scalers would turn into a fake real reading. Explicit flags still win, so the web page is unchanged.
+
+Tested through the API on a Tomato_Spoiled sample: photo only → camera only, Tomato_Spoiled 74.9%; + IR → 96.8%; + gas → 81.5%; all three → 97.7%; photo + 2 of 4 gas values → gas ignored (74.9%).
+
+This is what lets an ESP32 (or a phone) send whatever it has: it simply leaves out the fields of a sensor that is not connected.
+
+---
+
+## 9. Background removal for phone photos (added 28 Nov 2026)
+
+**Why:** the camera model only saw TR-6 photos (one fruit on a plain light background). On phone photos taken on a table, in a kitchen or at a market it sometimes confuses fruit types (§10, item 3b). Cutting the fruit out and putting it on white makes a new photo look more like the training data.
+
+**How (`Backend/app/background.py`):**
+- Model: **U²-Net-p** (`u2netp.onnx`, 4.6 MB), a salient-object segmentation network, run on CPU with onnxruntime. Pre/post-processing copies the rembg library's u2netp session, but without rembg's heavy dependencies (OpenCV, scikit-image, SciPy), to fit small servers (Render free tier, 512 MB).
+- Steps: shrink the photo to ≤1024 px (the classifier works at 224 px anyway) → 320×320 mask → soft alpha blend onto white (255) → camera model. Camera photo only; the thermal image is never touched.
+- Safety fallback: if the mask covers < 1% or > 90% of the frame, the cut-out is treated as failed and the original photo is used (reported as `background.applied = false` with a reason).
+- An optional crop around the fruit (padded, widened to 4:3) exists in the code for experiments but is **not used** (it hurt accuracy, below).
+
+**Harm check on TR-6 (`experiments/eval_background.py`, 15 random photos per class = 180, seed 0):**
+
+| Camera photo given to the model | Camera model acc | Fusion head (camera only) acc |
+|---|---|---|
+| Original | 97.78 | 97.78 |
+| White background | 95.56 | 98.89 |
+| White background + crop | 90.56 | 91.11 |
+
+(Fresh-vs-spoiled accuracy is the same as 12-class accuracy except for the crop row: 93.33 / 95.00.)
+
+- The mask was accepted on 180/180 photos. Cut-outs are clean (example grid: `report assets/bg_removal_examples.jpg`); one visible flaw is that part of a spoiled banana's dark stem fades out.
+- **White background: no clear harm.** The camera model drops 4 photos (−2.2 points), the fusion head gains 2 (+1.1). With 180 photos one photo = 0.56 points, so both changes are within noise.
+- **Crop: clearly harmful** (−7 points). The model learned the fruit's size within the frame; zooming in changes it. Not used.
+- Cost: about 1.0 s per photo for the cut-out on a laptop CPU (end-to-end API test: 208 ms without, 891 ms with).
+- Caveats: the photos may be training images (this checks for harm, not accuracy on new fruit). TR-6 backgrounds are light grey/blue, not pure white, so "white" is itself a small change.
+
+**Decision:** keep it as a switch, **off by default** (dataset-style photos don't need it), intended to be **on for phone uploads**.
+
+**Still to do:** the benefit test, the same comparison on 10–20 real phone photos of the six fruits (fresh and spoiled, ordinary backgrounds). Only that will show whether it actually fixes the fruit confusion.
+
+---
+
+## 10. Next steps / open items
 
 1. ~~Run the v2 notebook~~ — done; ~~update slides 6–7~~ — done (also slides 2, 3, 8, 9 and notes).
 2. Add the v2 Grad-CAM figure (`gradcam_examples.png`) and confusion matrix (`cm_fusion_D.png`) from Drive to the slides.
 3. Look into Tomato_Spoiled (recall 0.65), the weakest class.
-3b. **Fruit confusion on new photos** (tomato/guava → mango on web/phone images). Short-term fix done (fruit selector + unsure warning). Proper fix: retrain the camera model with varied fruit photos (public datasets + 30–50 own photos per fruit), stronger crop/zoom/brightness augmentation (no hue jitter), ideally a separate fruit-type classifier followed by fresh/spoiled per fruit.
+3b. **Fruit confusion on new photos** (tomato/guava → mango on web/phone images). Short-term fix done (fruit selector + unsure warning + optional background removal, §9; its benefit on phone photos is not measured yet). Proper fix: retrain the camera model with varied fruit photos (public datasets + 30–50 own photos per fruit), stronger crop/zoom/brightness augmentation (no hue jitter), ideally a separate fruit-type classifier followed by fresh/spoiled per fruit.
 4. Grouped 5-fold CV and/or a leave-one-day-out test (`GROUP_LEVEL="date"`), for a stronger "no leakage" claim.
 5. Slides: credit TR-6 explicitly, add a limitations slide (slide 8 partly covers it).
 6. Optional: out-of-fold embeddings for the fusion training (fixes `best_epoch = 1`).

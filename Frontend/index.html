@@ -52,6 +52,11 @@
           <select id="fruit-select"><option value="">Detect automatically</option></select>
         </label>
         <p class="hint">If you know the fruit, choose it: the model then only decides fresh or spoiled, so it can't mistake one fruit for another.</p>
+        <label class="check" for="bg-toggle">
+          <input type="checkbox" id="bg-toggle">
+          <span>Clean background <span class="muted">(cut the fruit out onto white, like the training photos)</span></span>
+        </label>
+        <p class="hint" id="bg-hint">Helps with photos taken on a table, in a kitchen or at a market. Not needed for dataset samples, which already have a white background.</p>
       </div>
 
       <!-- IR -->
@@ -132,6 +137,12 @@
         <div id="unsure" class="unsure" role="status" hidden></div>
 
         <div class="chips" id="sensor-chips"></div>
+
+        <figure id="bg-figure" class="bg-figure" hidden>
+          <img id="bg-preview" alt="The photo after background removal, as the camera model saw it">
+          <figcaption id="bg-caption"></figcaption>
+        </figure>
+        <p id="bg-note" class="hint" hidden></p>
 
         <h3 class="section-title">Top predictions</h3>
         <ul id="top-list" class="bars"></ul>
