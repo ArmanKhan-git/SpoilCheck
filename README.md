@@ -49,11 +49,18 @@ SpoilCheck Final Year Project/
 │           │   ├── CHANGES.txt
 │           │   └── SpoilCheck_TR6_fixed.zip   ← 10.6 GB zip for Colab
 │           └── fix_tr6.py                 ← script that produced TR-6_fixed (safe to re-run)
-└── Frontend/
-    ├── index.html, styles.css, app.js     ← model tester page (no build step, works offline)
+├── Frontend/
+│   ├── index.html, styles.css, app.js     ← model tester page (no build step, works offline)
+└── report assets/                         ← figures for the report (kept local, gitignored), see §11
+    ├── cm_srgb.png                        ← confusion matrix, camera model (v2 test)
+    ├── cm_ir.png                          ← confusion matrix, IR model (v2 test)
+    ├── cm_fusion_D.png                    ← confusion matrix, deployed fusion D (v2 test)
+    ├── gradcam_examples.png               ← Grad-CAM of the camera model, 8 test photos
+    ├── bg_removal_examples.jpg            ← original / white background / white + crop, examples
+    └── bg_removal_eval.json               ← raw numbers of the background-removal harm check (§9)
 ```
 
-Colab outputs (not copied locally): `MyDrive/spoilcheck_v2/` holds `fusion_ablation_results.csv`, `test_results_summary.csv`, `mm_train/val/test.csv`, `cm_srgb.png`, `cm_ir.png`, `cm_fusion.png`, `cm_fusion_D.png`, `gradcam_examples.png`.
+Colab outputs: `MyDrive/spoilcheck_v2/` holds `fusion_ablation_results.csv`, `test_results_summary.csv`, `mm_train/val/test.csv`, `cm_srgb.png`, `cm_ir.png`, `cm_fusion.png`, `cm_fusion_D.png`, `gradcam_examples.png`. Of these, `cm_srgb.png`, `cm_ir.png`, `cm_fusion_D.png` and `gradcam_examples.png` have been copied into `report assets/` (28 Nov 2026); the rest are still only on Drive.
 
 **All six model files must come from the same run.** The fusion head expects embeddings from its own encoders and the scalers from its own split; mixing v1 and v2 files gives wrong answers with no error.
 
@@ -155,6 +162,27 @@ Split: train 3,940 / val 527 / test 513.
 - Banana IR is now perfect (confirms the dataset fix).
 - Weakest classes (final model): **Tomato_Spoiled recall 0.65** (6 of 17 called fresh); Gooseberry_Spoiled precision 0.85. IR alone misses all spoiled tomatoes and half of spoiled carrot and mango.
 
+**Per-class errors, camera vs IR vs fusion D** (read from `cm_srgb.png`, `cm_ir.png` and `cm_fusion_D.png`, v2 test, 513 samples):
+
+| Error (true → predicted) | Camera (ConvNeXt) | IR (ResNet18 + temps) | Fusion D |
+|---|---|---|---|
+| Indian_Gooseberry fresh → spoiled (of 85) | 14 | 0 | 3 |
+| Tomato fresh → spoiled (of 187) | 5 | 0 | 0 |
+| Mango fresh → spoiled (of 34) | 0 | 0 | 1 |
+| Carrot spoiled → fresh (of 34) | 0 | 17 | 0 |
+| Mango spoiled → fresh (of 34) | 0 | 17 | 0 |
+| Tomato spoiled → fresh (of 17) | 2 | **17** | **6** |
+| **Total wrong** | **21** (95.91%) | **51** (90.06%) | **10** (98.05%) |
+
+- Every error in all three models is fresh ↔ spoiled within the same fruit; no model ever confuses fruit types on the test set. Banana and guava are 100% correct in all three.
+- **The two image sensors make opposite kinds of mistakes, which is why fusing them works:**
+  - The camera's errors are mostly **false alarms** (19 of 21 are fresh fruit called spoiled), mainly fresh gooseberry.
+  - The IR model **never raises a false alarm**: all 51 of its errors are spoiled fruit called fresh. It gets every fresh gooseberry right (85/85), exactly where the camera is weakest.
+  - Fusion keeps the best of both: false alarms drop from 19 (camera) to 4, and the IR model's missed carrots and mangoes are all fixed by the camera.
+- IR errors come in blocks of exactly 17 (half of spoiled carrot, half of spoiled mango, all of spoiled tomato). 17 is the number of thermal shots per fruit per day, so each block is very likely one whole session misjudged, not scattered mistakes. In thermal images those spoiled sessions apparently look like fresh ones.
+- But fusion is **worse on spoiled tomato than the camera alone** (recall 15/17 = 0.88 → 11/17 = 0.65). `cm_ir.png` confirms the cause: the IR model calls all 17 spoiled tomatoes fresh (0/17 recall), and in fusion it pulls the borderline ones toward "fresh". This trade-off is worth stating in the report: fusion is more accurate overall but misses more rotten tomatoes, which is the more costly mistake for a spoilage detector. A possible fix: make the fusion decision cost-sensitive (lower threshold for "spoiled") or weight Tomato_Spoiled higher in training.
+- The test set is imbalanced (Tomato_Not_spoiled = 187 of 513, 36%), which is why macro-F1 is reported next to accuracy.
+
 ### v1 (original data, 550 test samples, 11/12 classes) — superseded
 
 Standalone: camera 95.45%, IR 90.73%, gas 17.27% (12-class) / 70.55% fresh-vs-spoiled vs 69.64% baseline.
@@ -251,7 +279,7 @@ This is what lets an ESP32 (or a phone) send whatever it has: it simply leaves o
 
 (Fresh-vs-spoiled accuracy is the same as 12-class accuracy except for the crop row: 93.33 / 95.00.)
 
-- The mask was accepted on 180/180 photos. Cut-outs are clean (example grid: `report assets/bg_removal_examples.jpg`); one visible flaw is that part of a spoiled banana's dark stem fades out.
+- The mask was accepted on 180/180 photos. Cut-outs are clean (example grid: `report assets/bg_removal_examples.jpg`; raw numbers in `bg_removal_eval.json`, average cut-out time 0.99 s, prediction 0.28 s); one visible flaw is that part of a spoiled banana's dark stem fades out.
 - **White background: no clear harm.** The camera model drops 4 photos (−2.2 points), the fusion head gains 2 (+1.1). With 180 photos one photo = 0.56 points, so both changes are within noise.
 - **Crop: clearly harmful** (−7 points). The model learned the fruit's size within the frame; zooming in changes it. Not used.
 - Cost: about 1.0 s per photo for the cut-out on a laptop CPU (end-to-end API test: 208 ms without, 891 ms with).
@@ -266,7 +294,7 @@ This is what lets an ESP32 (or a phone) send whatever it has: it simply leaves o
 ## 10. Next steps / open items
 
 1. ~~Run the v2 notebook~~ — done; ~~update slides 6–7~~ — done (also slides 2, 3, 8, 9 and notes).
-2. Add the v2 Grad-CAM figure (`gradcam_examples.png`) and confusion matrix (`cm_fusion_D.png`) from Drive to the slides.
+2. Add the v2 Grad-CAM figure (`gradcam_examples.png`) and confusion matrix (`cm_fusion_D.png`) to the slides. They are now in `report assets/` together with `cm_srgb.png` and `cm_ir.png` (§11).
 3. Look into Tomato_Spoiled (recall 0.65), the weakest class.
 3b. **Fruit confusion on new photos** (tomato/guava → mango on web/phone images). Short-term fix done (fruit selector + unsure warning + optional background removal, §9; its benefit on phone photos is not measured yet). Proper fix: retrain the camera model with varied fruit photos (public datasets + 30–50 own photos per fruit), stronger crop/zoom/brightness augmentation (no hue jitter), ideally a separate fruit-type classifier followed by fresh/spoiled per fruit.
 4. Grouped 5-fold CV and/or a leave-one-day-out test (`GROUP_LEVEL="date"`), for a stronger "no leakage" claim.
@@ -278,3 +306,25 @@ This is what lets an ESP32 (or a phone) send whatever it has: it simply leaves o
    - **Days-left data:** Hass avocado ripening (4TU), FreshLab-Tomato (IEEE DataPort).
    - **Foresight-TR6+** (IEEE DataPort): an audited extension of TR-6, worth checking.
 8. **Open questions for the mentor:** drop gas from the claims now that v2 shows it adds nothing? Add a leave-one-day-out test before submission?
+
+---
+
+## 11. Report figures (`report assets/`)
+
+| File | What it shows | Use in the report |
+|---|---|---|
+| `cm_srgb.png` | Confusion matrix of the camera model alone (ConvNeXt-Tiny) on the v2 test set: 95.91%, 21 errors | Results: baseline single-sensor model |
+| `cm_ir.png` | Confusion matrix of the IR model alone (ResNet18 + temperatures): 90.06%, 51 errors, all spoiled → fresh (half of spoiled carrot and mango, all spoiled tomato) | Results: second single-sensor model; shows why IR complements the camera (§5) |
+| `cm_fusion_D.png` | Confusion matrix of the deployed fusion D (camera + IR + gas): 98.05%, 10 errors | Results: final model; compare with `cm_srgb.png` (§5 per-class table) |
+| `gradcam_examples.png` | Grad-CAM heatmaps from the camera model's last ConvNeXt stage, on 8 random test photos (4 fresh, 4 spoiled, `random_state=1`); 7 correct, 1 wrong (a fresh gooseberry called spoiled) | Explainability: the model looks at the fruit, not the background |
+| `bg_removal_examples.jpg` | Original photo / white background / white background + crop, one row per class | §9 background removal: cut-out quality, including the faded banana stem |
+| `bg_removal_eval.json` | Raw numbers of the background-removal harm check (180 photos) | Source for the §9 table |
+
+**What the Grad-CAM figure shows:**
+- The heat is on the fruit in every photo and almost none falls on the background, a sign the model has not learned a background or lighting shortcut.
+- Spoiled banana: it focuses on the dark spots and the darkened top. Spoiled guava: on the rot patches across the surface. Spoiled gooseberry: on the dark stem end.
+- Fresh tomato: it focuses on the calyx (stem) area and the skin around it.
+- The one wrong example (fresh gooseberry → spoiled) puts its heat on a dark spot near the stem end, the same region it uses for spoiled gooseberries. That fits the camera's main error type (14 fresh gooseberries called spoiled, §5).
+- Caveat: Grad-CAM shows where the model looks, not why. 8 photos are illustrations, not a measurement.
+
+**Not yet in the folder:** `cm_fusion.png` (config E, not deployed) is still on Drive, and the ablation results exist only as the §5 table (no chart yet).
