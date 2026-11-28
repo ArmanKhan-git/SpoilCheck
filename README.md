@@ -237,6 +237,7 @@ If retraining: either change cell 7 to `p_mod_drop=0.0` or run the cell above, t
 
 - **Start:** `Backend\run.bat`, then open http://127.0.0.1:8000.
 - **Manual:** `cd Backend` and run `.venv\Scripts\python -m uvicorn app.main:app --host 127.0.0.1 --port 8000`.
+- **Python version:** use **Python 3.11** (3.9–3.13 work). The pinned `torch 2.5.1` has no build for Python 3.14, so `pip install` fails there. If the default `python` is newer, create the venv with `py -3.11 -m venv .venv` before running `run.bat`. If port 8000 is busy, use `--port 8001`. (Both happened on the 28 Nov 2026 local setup; first start downloaded the models in ~58 s, later starts load in ~4 s.)
 - **Page:** camera photo (required), **IR toggle** (thermal image + t_min/t_max from the filename), **Methane toggle** (ADC, Rs, Rs/R0, ppm), "Load sample" with ✓/✗ against the true label; shows the fusion verdict, spoilage probability, top 5, and each standalone model's answer; flipping a toggle re-predicts.
 - **Fruit selector (added 22 Nov 2026):** "Which fruit is it?" under the photo. When set, every model's logits are masked to that fruit's two classes, so it only decides fresh vs spoiled and can't confuse fruits. Default "Detect automatically".
 - **Unsure warning:** shown when the top fruit's summed probability is < 0.45 or < 3× the runner-up fruit (`FRUIT_CONF_MIN`, `FRUIT_RATIO_MIN` in `predictor.py`), or when the spoiled probability is within 0.5 ± 0.15. Calibrated on 60 TR-6 photos (camera only): 0 false fruit warnings; a web photo of a mouldy tomato called "Mango 34%" is flagged. Reason it exists: on out-of-dataset photos the model sometimes confuses fruit types (tomato/guava → mango), because it learned from only ~3 fruits per variety on a white background.
@@ -287,7 +288,13 @@ This is what lets an ESP32 (or a phone) send whatever it has: it simply leaves o
 
 **Decision:** keep it as a switch, **off by default** (dataset-style photos don't need it), intended to be **on for phone uploads**.
 
-**Still to do:** the benefit test, the same comparison on 10–20 real phone photos of the six fruits (fresh and spoiled, ordinary backgrounds). Only that will show whether it actually fixes the fruit confusion.
+**First hands-on phone test (28 Nov 2026, informal):** the tester was run locally and phone photos of real produce were uploaded (camera only, no IR or gas). Observations:
+- **Banana and carrot, fresh and spoiled:** fresh vs spoiled was correct, with clean background both off and on.
+- **Fruit type is sometimes confused** on phone photos (the known problem from §10, item 3b). The "Which fruit is it?" selector handles this: once the fruit is set, only fresh vs spoiled is decided.
+- **Fresh vs spoiled also looked right on produce the model was never trained on.** Likely reason: the model has learned general visual signs of rot (dark patches, mould, wrinkled or discoloured skin) that look similar across fruits. The fruit name it gives for such items is meaningless (it can only pick one of its six), and this was not measured, so it should be presented as an observation, not a supported feature.
+- Caveat: no photo counts or exact confidences were recorded, so this is a qualitative check, not an accuracy figure. Spoiled tomato (the weak class, §5) was not covered in this round.
+
+**Still to do:** a recorded version of this test, 10–20 real phone photos of the six fruits (fresh and spoiled, ordinary backgrounds, especially spoiled tomato), noting the prediction and confidence with clean background off and on and with the fruit selector on "auto" and set. Only that will show in numbers whether background removal actually fixes the fruit confusion.
 
 ---
 
@@ -296,7 +303,7 @@ This is what lets an ESP32 (or a phone) send whatever it has: it simply leaves o
 1. ~~Run the v2 notebook~~ — done; ~~update slides 6–7~~ — done (also slides 2, 3, 8, 9 and notes).
 2. Add the v2 Grad-CAM figure (`gradcam_examples.png`) and confusion matrix (`cm_fusion_D.png`) to the slides. They are now in `report assets/` together with `cm_srgb.png` and `cm_ir.png` (§11).
 3. Look into Tomato_Spoiled (recall 0.65), the weakest class.
-3b. **Fruit confusion on new photos** (tomato/guava → mango on web/phone images). Short-term fix done (fruit selector + unsure warning + optional background removal, §9; its benefit on phone photos is not measured yet). Proper fix: retrain the camera model with varied fruit photos (public datasets + 30–50 own photos per fruit), stronger crop/zoom/brightness augmentation (no hue jitter), ideally a separate fruit-type classifier followed by fresh/spoiled per fruit.
+3b. **Fruit confusion on new photos** (tomato/guava → mango on web/phone images). Short-term fix done (fruit selector + unsure warning + optional background removal, §9). A first informal phone test (28 Nov 2026, §9) confirmed the fruit confusion still happens and that fresh vs spoiled is right on banana and carrot; the benefit of background removal is not measured yet. Proper fix: retrain the camera model with varied fruit photos (public datasets + 30–50 own photos per fruit), stronger crop/zoom/brightness augmentation (no hue jitter), ideally a separate fruit-type classifier followed by fresh/spoiled per fruit.
 4. Grouped 5-fold CV and/or a leave-one-day-out test (`GROUP_LEVEL="date"`), for a stronger "no leakage" claim.
 5. Slides: credit TR-6 explicitly, add a limitations slide (slide 8 partly covers it).
 6. Optional: out-of-fold embeddings for the fusion training (fixes `best_epoch = 1`).
